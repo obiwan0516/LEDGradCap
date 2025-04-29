@@ -1,5 +1,7 @@
 /*
  * Graduation Cap LED Matrix Controller with Animations
+ * Including Date and Time Display
+ * With Auto-Cycling Feature
  */
 
 // Blynk Configuration
@@ -12,6 +14,7 @@
 #include <BlynkSimpleEsp32.h>
 #include "ESP32-HUB75-MatrixPanel-I2S-DMA.h"
 #include <FastLED.h>
+#include <time.h>  // Include time library for date/time functionality
 
 // Replace with your WiFi credentials
 char ssid[] = "MST-GUEST";
@@ -45,13 +48,34 @@ int textSpeed = 50;         // Faster default speed
 int textColor = 0xFFFFFF;   // Default white
 unsigned long textUpdateTimer = 0;
 
+// Auto-cycle animations variables
+bool autoCycleEnabled = false;
+unsigned long autoCycleTimer = 0;
+int autoCycleInterval = 10000;  // 10 seconds default cycle time
+const uint8_t TOTAL_ANIMATIONS = 7;  // Total number of animations available
+
 // FastLED color palette for some effects
 CRGBPalette16 currentPalette = RainbowColors_p;
 
 // LED Matrix and brightness control
 uint8_t brightness = 50;  // Default 50% brightness (range 0-255)
 
+// Time and date parameters
+const char* ntpServer = "pool.ntp.org";
+const long gmtOffset_sec = -21600;     // Set your timezone (GMT-6 for Central Time)
+const int daylightOffset_sec = 3600;   // 1 hour DST offset (if applicable)
+unsigned long timeUpdateTimer = 0;
+const int TIME_UPDATE_INTERVAL = 1000; // Update time display every second
+
 // ************************************************************* BEGIN Blynk Digital Console Variables ***************************************
+
+// Modify the Blynk text handler
+BLYNK_WRITE(V0) {
+  scrollText = param.asStr();
+  textX = PANE_WIDTH; // Reset text position
+  Serial.print("New text (converted): ");
+  Serial.println(scrollText);
+}
 
 // Receive animation style from Blynk app
 BLYNK_WRITE(V1) {
@@ -62,14 +86,11 @@ BLYNK_WRITE(V1) {
   // Reset animation counters
   time_counter = 0;
   animTimer = millis();
-}
-
-// Modify the Blynk text handler
-BLYNK_WRITE(V0) {
-  scrollText = param.asStr();
-  textX = PANE_WIDTH; // Reset text position
-  Serial.print("New text (converted): ");
-  Serial.println(scrollText);
+  
+  // Reset auto-cycle timer when manually changing animation
+  if (autoCycleEnabled) {
+    autoCycleTimer = millis();
+  }
 }
 
 // Receive text color from Blynk app
@@ -100,6 +121,32 @@ BLYNK_WRITE(V4) {
   
   Serial.print("Brightness set to: ");
   Serial.println(brightness);
+}
+
+// Auto-cycle toggle (V5)
+BLYNK_WRITE(V5) {
+  autoCycleEnabled = param.asInt();
+  
+  // Reset the timer when turning on
+  if (autoCycleEnabled) {
+    autoCycleTimer = millis();
+    Serial.println("Auto-cycle enabled");
+  } else {
+    Serial.println("Auto-cycle disabled");
+  }
+}
+
+// Auto-cycle interval in seconds (V6)
+BLYNK_WRITE(V6) {
+  int seconds = param.asInt();
+  // Ensure reasonable bounds (minimum 5 seconds, maximum 5 minutes)
+  if (seconds < 5) seconds = 5;
+  if (seconds > 300) seconds = 300;
+  
+  autoCycleInterval = seconds * 1000; // Convert to milliseconds
+  Serial.print("Auto-cycle interval set to: ");
+  Serial.print(seconds);
+  Serial.println(" seconds");
 }
 
 // ************************************************************* END Blynk Digital Console Variables ***************************************
@@ -141,9 +188,18 @@ void setup() {
   // Initialize timers
   textUpdateTimer = millis();
   animTimer = millis();
+  timeUpdateTimer = millis();
+  autoCycleTimer = millis();
+  
+  // Initialize and configure time
+  configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
   
   // Clear display
   dma_display->fillScreenRGB888(0, 0, 0);
+  
+  // Set up the initial values for auto-cycle in Blynk app
+  Blynk.virtualWrite(V5, autoCycleEnabled);
+  Blynk.virtualWrite(V6, autoCycleInterval / 1000); // Convert back to seconds for display
 }
 
 // ************************************************************ Default Scrolling Text ************************************************
@@ -355,11 +411,115 @@ void drawWavingFlag() {
   }
 }
 
+// Animation 5: Date and Time Display (12-hour format)
+void drawDateTime12Hour() {
+  // Clear the display
+  dma_display->fillScreenRGB888(0, 0, 0);
+  
+  // Get current time
+  struct tm timeinfo;
+  if(!getLocalTime(&timeinfo)) {
+    // If time sync failed, show error
+    dma_display->setTextSize(1);
+    dma_display->setTextColor(dma_display->color565(255, 0, 0));
+    dma_display->setCursor(5, 28);
+    dma_display->print("Time Sync Error");
+    return;
+  }
+  
+  // Extract RGB from textColor for consistent look
+  uint8_t r = (textColor >> 16) & 0xFF;
+  uint8_t g = (textColor >> 8) & 0xFF;
+  uint8_t b = textColor & 0xFF;
+  uint16_t clockColor = dma_display->color565(r, g, b);
+  
+  // Prepare time string (12-hour format with AM/PM)
+  char timeStr[32];
+  strftime(timeStr, sizeof(timeStr), "%I:%M %p", &timeinfo);
+  
+  // Display time in large format
+  dma_display->setTextColor(clockColor);
+  dma_display->setTextSize(2);
+  
+  // Center the time string
+  int16_t textWidth = strlen(timeStr) * 12;
+  int16_t x = (PANE_WIDTH - textWidth) / 2;
+  if (x < 0) x = 0;
+  
+  dma_display->setCursor(x, 24);
+  dma_display->print(timeStr);
+}
+
+// Animation 6: Date and Time Display (Date + Time)
+void drawDateAndTime() {
+  // Clear the display
+  dma_display->fillScreenRGB888(0, 0, 0);
+  
+  // Get current time
+  struct tm timeinfo;
+  if(!getLocalTime(&timeinfo)) {
+    // If time sync failed, show error
+    dma_display->setTextSize(1);
+    dma_display->setTextColor(dma_display->color565(255, 0, 0));
+    dma_display->setCursor(5, 28);
+    dma_display->print("Time Sync Error");
+    return;
+  }
+  
+  // Extract RGB from textColor for consistent look
+  uint8_t r = (textColor >> 16) & 0xFF;
+  uint8_t g = (textColor >> 8) & 0xFF;
+  uint8_t b = textColor & 0xFF;
+  uint16_t clockColor = dma_display->color565(r, g, b);
+  
+  // Prepare time and date strings
+  char timeStr[32];
+  char dateStr[32];
+  
+  strftime(timeStr, sizeof(timeStr), "%H:%M", &timeinfo);
+  strftime(dateStr, sizeof(dateStr), "%b %d, %Y", &timeinfo);
+  
+  // Display date and time on separate lines
+  dma_display->setTextColor(clockColor);
+  
+  // Date on top (smaller)
+  dma_display->setTextSize(1);
+  dma_display->setCursor(4, 20);
+  dma_display->print(dateStr);
+  
+  // Time below (larger)
+  dma_display->setTextSize(2);
+  dma_display->setCursor(4, 35);
+  dma_display->print(timeStr);
+}
+
 //******************************************************** Animations End ***************************************************
+
+// Function to handle the auto-cycling of animations
+void handleAutoCycle() {
+  if (autoCycleEnabled && (millis() - autoCycleTimer >= autoCycleInterval)) {
+    // Move to next animation
+    currentAnimation = (currentAnimation + 1) % TOTAL_ANIMATIONS;
+    
+    // Reset timers and counters
+    time_counter = 0;
+    animTimer = millis();
+    autoCycleTimer = millis();
+    
+    // Update Blynk with the new animation
+    Blynk.virtualWrite(V1, currentAnimation);
+    
+    Serial.print("Auto-cycling to animation: ");
+    Serial.println(currentAnimation);
+  }
+}
 
 void loop() {
   // Run Blynk
   Blynk.run();
+  
+  // Check for auto-cycling
+  handleAutoCycle();
   
   // Run the current animation
   switch (currentAnimation) {
@@ -377,6 +537,12 @@ void loop() {
       break;
     case 4:
       drawWavingFlag();
+      break;
+    case 5:
+      drawDateTime12Hour();  // Time only (12h format)
+      break;
+    case 6:
+      drawDateAndTime();  // Date + Time display
       break;
     default:
       drawScrollingText();  // Default to text scrolling
