@@ -49,7 +49,7 @@ int textColor = 0xFFFFFF;   // Default white
 unsigned long textUpdateTimer = 0;
 
 // Auto-cycle animations variables
-bool autoCycleEnabled = false;
+bool autoCycleEnabled = true;
 unsigned long autoCycleTimer = 0;
 int autoCycleInterval = 10000;  // 10 seconds default cycle time
 const uint8_t TOTAL_ANIMATIONS = 7;  // Total number of animations available
@@ -384,8 +384,8 @@ void drawFireworks() {
 void drawWavingFlag() {
   // Use school colors for stripes
   // Assuming gold and black as example school colors - change to your school colors!
-  uint16_t color1 = dma_display->color565(21, 71, 52);  // Forest Green
-  uint16_t color2 = dma_display->color565(206, 184, 136);      // Gold
+  uint16_t color1 = dma_display->color565(18, 71, 52);  // Forest Green
+  uint16_t color2 = dma_display->color565(209, 184, 136);      // Gold
   
   for (int y = 0; y < PANE_HEIGHT; y++) {
     // Calculate wave offset for this row
